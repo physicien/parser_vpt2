@@ -6,9 +6,12 @@ quantum chemistry output file. Supports filtering by resonance type
 and IR intensity threshold.
 """
 
+from __future__ import annotations
+
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
-from dataclasses import dataclass
+from typing import Iterator
 
 
 @dataclass
@@ -35,164 +38,138 @@ class FermiResonance:
         return set(self.modes)
 
     def __str__(self) -> str:
+        OM = "\u03c9"
         if self.resonance_type == 1:
-            desc = f"Type I:  ω{self.modes[0]} ≈ 2×ω{self.modes[1]}"
+            desc = (
+                f"Type I:  {OM}{self.modes[0]}"
+                f" \u2248 2\u00d7{OM}{self.modes[1]}"
+            )
         else:
             desc = (
-                f"Type II: ω{self.modes[0]} ≈ ω{self.modes[1]}"
-                f" + ω{self.modes[2]}"
+                f"Type II: {OM}{self.modes[0]}"
+                f" \u2248 {OM}{self.modes[1]}"
+                f" + {OM}{self.modes[2]}"
             )
-        return f"{desc}  |Δ| = {self.denominator:.4f} cm⁻¹"
+        return f"{desc}  |\u0394| = {self.denominator:.4f} cm\u207b\u00b9"
 
 
-def _detect_vib_offset(lines: list[str]) -> int:
-    """Detect the offset between Fermi-block and IR-table mode numbering.
+# ---------------------------------------------------------------------------
+# Single-pass parser
+# ---------------------------------------------------------------------------
 
-    The Fermi-resonance block numbers only true vibrational modes
-    (starting at 0), while the IR table also includes translational/
-    rotational     modes at the beginning.  This offset is equal to the
-    number of modes in the IR table with a frequency below 10 cm^-1.
-
-    Parameters
-    ----------
-    lines : list of str
-        All lines of the ORCA output file.
-
-    Returns
-    -------
-    int
-        Number of translational/rotational modes (the offset).
-    """
-    ir_re = re.compile(
-        r"^\s*(\d+)\s+(-?\d+\.\d+)"
-    )
-    freq0_line = None
-    for line in lines:
-        m = ir_re.search(line)
-        if m and int(m.group(1)) == 0:
-            freq0_line = line
-            break
-    if freq0_line is None:
-        return 0
-    freq0 = float(ir_re.search(freq0_line).group(2))
-
-    if freq0 < 10:
-        offset = 0
-        for line in lines:
-            m = ir_re.search(line)
-            if m:
-                freq = float(m.group(2))
-                if freq < 10:
-                    offset = int(m.group(1)) + 1
-                else:
-                    break
-        return offset
-    return 0
+@dataclass
+class _Vpt2Data:
+    """Container for all data extracted in a single file pass."""
+    ir_intensities: dict[int, float] = field(default_factory=dict)
+    vib_offset: int = 0
+    fermi_resonances: list[FermiResonance] = field(default_factory=list)
 
 
-def parse_ir_intensities(lines: list[str]) -> dict[int, float]:
-    """Parse harmonic IR intensities from the VPT2 output.
+# Pre-compiled regexes (module level, compiled once)
+_RE_IR_HEADER = re.compile(r"^\s*Mode\s+freq\s+Int")
+_RE_IR_ROW = re.compile(r"^\s*(\d+)\s+")
+_RE_TYPE1 = re.compile(
+    r"possible Type I resonance mode (\d+) (\d+)\s+([\d.]+)"
+)
+_RE_TYPE2 = re.compile(
+    r"possible Type II resonance \d+ mode (\d+) (\d+) (\d+)\s+([\d.]+)"
+)
 
-    Locates the last ``IR Intensities`` table (the one from the
-    ``orca_vpt2`` section) and extracts the intensity (km/mol) for
-    each normal mode.
 
-    Parameters
-    ----------
-    lines : list of str
-        All lines of the ORCA output file.
+def _parse_ir_table(lines: Iterator[str]) -> tuple[dict[int, float], int]:
+    """Parse the next IR Intensities table from *lines*.
+
+    Advances the iterator past the end of the table.
 
     Returns
     -------
-    dict of int -> float
-        Mapping from mode index to IR intensity in km/mol.
-        Only modes with a finite numeric intensity are included.
+    (ints, offset)
+        ints : mapping from mode index to IR intensity (km/mol).
+        offset : number of leading trans/rot modes (freq < 10 cm^-1).
     """
-    ints: dict[int, float] = {}
-    header_re = re.compile(r"^\s*Mode\s+freq\s+Int")
-    data_re = re.compile(
-        r"^\s*(\d+)\s+"
-    )
-
-    in_table = False
+    all_rows: list[tuple[int, float, float]] = []  # (mode, freq, int)
     past_sep = False
     for line in lines:
-        if header_re.match(line):
-            in_table = True
-            past_sep = False
-            ints.clear()
-            continue
-        if not in_table:
-            continue
         if line.startswith("---"):
             if past_sep:
-                in_table = False
-            else:
-                past_sep = True
+                break
+            past_sep = True
             continue
         if not past_sep:
             continue
-        m = data_re.match(line)
-        if m:
-            mode = int(m.group(1))
-            parts = line.split()
-            if len(parts) >= 3:
-                raw = parts[2]
-            else:
-                continue
-            try:
-                val = float(raw)
-            except ValueError:
-                continue
-            if not (val != val):  # skip NaN
-                ints[mode] = val
-        else:
-            in_table = False
-    return ints
+        m = _RE_IR_ROW.match(line)
+        if not m:
+            break
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        try:
+            freq = float(parts[1])
+        except ValueError:
+            continue
+        mode = int(m.group(1))
+        try:
+            val = float(parts[2])
+        except ValueError:
+            continue
+        all_rows.append((mode, freq, val))
+
+    ints = {}
+    offset = 0
+    for mode, freq, val in all_rows:
+        if not (val != val):  # skip NaN
+            ints[mode] = val
+        if freq < 10:
+            offset = mode + 1
+    return ints, offset
 
 
-def parse_fermi_resonances(lines: list[str]) -> list[FermiResonance]:
-    """Parse Fermi resonances from the VPT2 output.
-
-    Scans the ``Analysis of possible Fermi resonances with VPT2
-    denominators`` block for Type I and Type II resonance lines.
+def parse_file(path: str | Path) -> _Vpt2Data:
+    """Parse an ORCA VPT2 output file in a single pass.
 
     Parameters
     ----------
-    lines : list of str
-        All lines of the ORCA output file.
+    path : str or Path
+        Path to the ORCA ``.out`` file.
 
     Returns
     -------
-    list of FermiResonance
-        Every resonance found in the output.
+    _Vpt2Data
+        Container with ``ir_intensities``, ``vib_offset``, and
+        ``fermi_resonances``.
     """
-    resonances: list[FermiResonance] = []
-    re_type1 = re.compile(
-        r"possible Type I resonance mode (\d+) (\d+)\s+([\d.]+)"
-    )
-    re_type2 = re.compile(
-        r"possible Type II resonance \d+ mode (\d+) (\d+) (\d+)\s+([\d.]+)"
-    )
+    data = _Vpt2Data()
 
-    for line in lines:
-        m = re_type2.search(line)
-        if m:
-            resonances.append(FermiResonance(
-                resonance_type=2,
-                modes=[int(m.group(1)), int(m.group(2)), int(m.group(3))],
-                denominator=float(m.group(4)),
-            ))
-            continue
-        m = re_type1.search(line)
-        if m:
-            resonances.append(FermiResonance(
-                resonance_type=1,
-                modes=[int(m.group(1)), int(m.group(2))],
-                denominator=float(m.group(3)),
-            ))
+    with open(path) as fh:
+        for line in fh:
+            # --- IR intensity tables (reset on each new table) ---
+            if _RE_IR_HEADER.match(line):
+                ints, offset = _parse_ir_table(fh)
+                data.ir_intensities = ints
+                if not data.vib_offset:
+                    data.vib_offset = offset
+                continue
 
-    return resonances
+            # --- Fermi resonances ---
+            m = _RE_TYPE2.search(line)
+            if m:
+                data.fermi_resonances.append(FermiResonance(
+                    resonance_type=2,
+                    modes=[int(m.group(1)),
+                           int(m.group(2)),
+                           int(m.group(3))],
+                    denominator=float(m.group(4)),
+                ))
+                continue
+            m = _RE_TYPE1.search(line)
+            if m:
+                data.fermi_resonances.append(FermiResonance(
+                    resonance_type=1,
+                    modes=[int(m.group(1)), int(m.group(2))],
+                    denominator=float(m.group(3)),
+                ))
+
+    return data
 
 
 def main() -> None:
@@ -216,30 +193,28 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    path = Path(args.file)
-    if not path.exists():
-        raise FileNotFoundError(f"{path} not found")
+    data = parse_file(args.file)
 
-    lines = path.read_text().splitlines(keepends=True)
-
-    ir_ints = parse_ir_intensities(lines)
-    offset = _detect_vib_offset(lines)
-    resonances = parse_fermi_resonances(lines)
-
-    if not resonances:
+    if not data.fermi_resonances:
         print("No Fermi resonances found.")
         return
+
+    resonances = data.fermi_resonances
 
     if args.type:
         resonances = [r for r in resonances if r.resonance_type == args.type]
 
     if args.min_intensity > 0:
-        def passes_intensity(r: FermiResonance) -> bool:
+        offset = data.vib_offset
+        ir = data.ir_intensities
+
+        def _passes_int(r: FermiResonance) -> bool:
             return any(
-                ir_ints.get(m + offset, 0) >= args.min_intensity
+                ir.get(m + offset, 0) >= args.min_intensity
                 for m in r.involved_modes()
             )
-        resonances = [r for r in resonances if passes_intensity(r)]
+
+        resonances = [r for r in resonances if _passes_int(r)]
 
     if not resonances:
         print("No matching Fermi resonances.")
