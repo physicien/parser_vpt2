@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Parse ORCA VPT2 output files for Fermi resonances."""
+"""Parse ORCA VPT2 output files for Fermi resonances.
+
+Fetches Fermi resonances from the VPT2 analysis section of an ORCA
+quantum chemistry output file. Supports filtering by resonance type
+and IR intensity threshold.
+"""
 
 import re
 from pathlib import Path
@@ -8,11 +13,25 @@ from dataclasses import dataclass
 
 @dataclass
 class FermiResonance:
-    resonance_type: int  # 1 or 2
-    modes: list[int]     # [i, j] for type I, [i, j, k] for type II
+    """A single Fermi resonance identified in the VPT2 output.
+
+    Parameters
+    ----------
+    resonance_type : int
+        1 for Type I (fundamental near overtone),
+        2 for Type II (fundamental near combination band).
+    modes : list of int
+        Mode indices: [i, j] for Type I (omega_i ~ 2*omega_j),
+        [i, j, k] for Type II (omega_i ~ omega_j + omega_k).
+    denominator : float
+        Energy difference in cm^-1.
+    """
+    resonance_type: int
+    modes: list[int]
     denominator: float
 
     def involved_modes(self) -> set[int]:
+        """Return the set of all normal mode indices involved."""
         return set(self.modes)
 
     def __str__(self) -> str:
@@ -27,6 +46,22 @@ class FermiResonance:
 
 
 def parse_ir_intensities(lines: list[str]) -> dict[int, float]:
+    """Parse harmonic IR intensities from the VPT2 output.
+
+    Locates the ``IR Intensities`` table printed by the ``orca_vpt2``
+    program and extracts the intensity (km/mol) for each normal mode.
+
+    Parameters
+    ----------
+    lines : list of str
+        All lines of the ORCA output file.
+
+    Returns
+    -------
+    dict of int -> float
+        Mapping from mode index to IR intensity in km/mol.
+        Only modes with a finite numeric intensity are included.
+    """
     ints: dict[int, float] = {}
     header_re = re.compile(r"^\s*Mode\s+freq\s+Int")
     data_re = re.compile(
@@ -62,6 +97,21 @@ def parse_ir_intensities(lines: list[str]) -> dict[int, float]:
 
 
 def parse_fermi_resonances(lines: list[str]) -> list[FermiResonance]:
+    """Parse Fermi resonances from the VPT2 output.
+
+    Scans the ``Analysis of possible Fermi resonances with VPT2
+    denominators`` block for Type I and Type II resonance lines.
+
+    Parameters
+    ----------
+    lines : list of str
+        All lines of the ORCA output file.
+
+    Returns
+    -------
+    list of FermiResonance
+        Every resonance found in the output.
+    """
     resonances: list[FermiResonance] = []
     re_type1 = re.compile(
         r"possible Type I resonance mode (\d+) (\d+)\s+([\d.]+)"
@@ -91,6 +141,11 @@ def parse_fermi_resonances(lines: list[str]) -> list[FermiResonance]:
 
 
 def main() -> None:
+    """Command-line entry point.
+
+    Parses arguments, reads the ORCA file, and prints matching
+    Fermi resonances to stdout.
+    """
     import argparse
     parser = argparse.ArgumentParser(
         description="Parse Fermi resonances from ORCA VPT2 output."
