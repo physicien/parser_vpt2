@@ -45,11 +45,57 @@ class FermiResonance:
         return f"{desc}  |Δ| = {self.denominator:.4f} cm⁻¹"
 
 
+def _detect_vib_offset(lines: list[str]) -> int:
+    """Detect the offset between Fermi-block and IR-table mode numbering.
+
+    The Fermi-resonance block numbers only true vibrational modes
+    (starting at 0), while the IR table also includes translational/
+    rotational     modes at the beginning.  This offset is equal to the
+    number of modes in the IR table with a frequency below 10 cm^-1.
+
+    Parameters
+    ----------
+    lines : list of str
+        All lines of the ORCA output file.
+
+    Returns
+    -------
+    int
+        Number of translational/rotational modes (the offset).
+    """
+    ir_re = re.compile(
+        r"^\s*(\d+)\s+(-?\d+\.\d+)"
+    )
+    freq0_line = None
+    for line in lines:
+        m = ir_re.search(line)
+        if m and int(m.group(1)) == 0:
+            freq0_line = line
+            break
+    if freq0_line is None:
+        return 0
+    freq0 = float(ir_re.search(freq0_line).group(2))
+
+    if freq0 < 10:
+        offset = 0
+        for line in lines:
+            m = ir_re.search(line)
+            if m:
+                freq = float(m.group(2))
+                if freq < 10:
+                    offset = int(m.group(1)) + 1
+                else:
+                    break
+        return offset
+    return 0
+
+
 def parse_ir_intensities(lines: list[str]) -> dict[int, float]:
     """Parse harmonic IR intensities from the VPT2 output.
 
-    Locates the ``IR Intensities`` table printed by the ``orca_vpt2``
-    program and extracts the intensity (km/mol) for each normal mode.
+    Locates the last ``IR Intensities`` table (the one from the
+    ``orca_vpt2`` section) and extracts the intensity (km/mol) for
+    each normal mode.
 
     Parameters
     ----------
@@ -65,34 +111,43 @@ def parse_ir_intensities(lines: list[str]) -> dict[int, float]:
     ints: dict[int, float] = {}
     header_re = re.compile(r"^\s*Mode\s+freq\s+Int")
     data_re = re.compile(
-        r"^\s*(\d+)\s+[-\d]+\.[\d]+\s+([-\d.]+(?:e[+-]?\d+)?)\s"
+        r"^\s*(\d+)\s+"
     )
 
     in_table = False
-    saw_sep = False
+    past_sep = False
     for line in lines:
         if header_re.match(line):
             in_table = True
-            saw_sep = False
-            continue
-        if in_table and line.startswith("---"):
-            if saw_sep:
-                in_table = False
-            else:
-                saw_sep = True
+            past_sep = False
+            ints.clear()
             continue
         if not in_table:
+            continue
+        if line.startswith("---"):
+            if past_sep:
+                in_table = False
+            else:
+                past_sep = True
+            continue
+        if not past_sep:
             continue
         m = data_re.match(line)
         if m:
             mode = int(m.group(1))
-            raw = m.group(2)
+            parts = line.split()
+            if len(parts) >= 3:
+                raw = parts[2]
+            else:
+                continue
             try:
                 val = float(raw)
             except ValueError:
                 continue
             if not (val != val):  # skip NaN
                 ints[mode] = val
+        else:
+            in_table = False
     return ints
 
 
@@ -168,6 +223,7 @@ def main() -> None:
     lines = path.read_text().splitlines(keepends=True)
 
     ir_ints = parse_ir_intensities(lines)
+    offset = _detect_vib_offset(lines)
     resonances = parse_fermi_resonances(lines)
 
     if not resonances:
@@ -179,8 +235,10 @@ def main() -> None:
 
     if args.min_intensity > 0:
         def passes_intensity(r: FermiResonance) -> bool:
-            return any(ir_ints.get(m, 0) >= args.min_intensity
-                       for m in r.involved_modes())
+            return any(
+                ir_ints.get(m + offset, 0) >= args.min_intensity
+                for m in r.involved_modes()
+            )
         resonances = [r for r in resonances if passes_intensity(r)]
 
     if not resonances:
