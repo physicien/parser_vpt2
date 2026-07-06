@@ -65,8 +65,14 @@ class _Vpt2Data:
     fermi_resonances: list[FermiResonance] = field(default_factory=list)
 
 
+# Constants
+_IR_TABLE_TITLE = "IR Intensities"
+_IR_COL_HEADER = "Mode"
+_IR_COL_KEY = "freq"
+_RESONANCE_KEY = "resonance"
+_TABLE_SEP = "---"
+
 # Pre-compiled regexes (module level, compiled once)
-_RE_IR_HEADER = re.compile(r"^\s*Mode\s+freq\s+Int")
 _RE_IR_ROW = re.compile(r"^\s*(\d+)\s+")
 _RE_TYPE1 = re.compile(
     r"possible Type I resonance mode (\d+) (\d+)\s+([\d.]+)"
@@ -90,7 +96,7 @@ def _parse_ir_table(lines: Iterator[str]) -> tuple[dict[int, float], int]:
     all_rows: list[tuple[int, float, float]] = []  # (mode, freq, int)
     past_sep = False
     for line in lines:
-        if line.startswith("---"):
+        if line.startswith(_TABLE_SEP):
             if past_sep:
                 break
             past_sep = True
@@ -143,14 +149,20 @@ def parse_file(path: str | Path) -> _Vpt2Data:
     with open(path) as fh:
         for line in fh:
             # --- IR intensity tables (reset on each new table) ---
-            if _RE_IR_HEADER.match(line):
-                ints, offset = _parse_ir_table(fh)
-                data.ir_intensities = ints
-                if not data.vib_offset:
-                    data.vib_offset = offset
+            if _IR_TABLE_TITLE in line:
+                for l in fh:
+                    if l.startswith(_IR_COL_HEADER) and _IR_COL_KEY in l:
+                        ints, offset = _parse_ir_table(fh)
+                        data.ir_intensities = ints
+                        if not data.vib_offset:
+                            data.vib_offset = offset
+                        break
                 continue
 
             # --- Fermi resonances ---
+            if _RESONANCE_KEY not in line:
+                continue
+
             m = _RE_TYPE2.search(line)
             if m:
                 data.fermi_resonances.append(FermiResonance(
