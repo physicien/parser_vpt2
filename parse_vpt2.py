@@ -253,10 +253,14 @@ def main() -> None:
     if args.min_intensity > 0:
         ir = data.ir_intensities
 
+        # Only check the overtone/combination modes (j{,k}), not the
+        # fundamental (i), since the coupling intensity is what matters.
+        # Require both coupling modes to be above threshold (`all` rather
+        # than `any`) for a stricter filter.
         def _passes_int(r: FermiResonance) -> bool:
-            return any(
+            return all(
                 ir.get(m, 0) >= args.min_intensity
-                for m in r.involved_modes()
+                for m in r.modes[1:]
             )
 
         resonances = [r for r in resonances if _passes_int(r)]
