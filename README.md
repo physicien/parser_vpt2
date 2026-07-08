@@ -50,8 +50,6 @@ The `|Δ|` value is the energy difference in cm⁻¹ (denominator). Lower values
 
 ### Note
 
-Type I (possible Type I resonance mode i j): fundamental mode i is near-degenerate with the overtone 2×ω_j. Type II (possible Type II resonance 10 mode i j k): fundamental mode i is near-degenerate with the combination ω_j + ω_k.
+- The number at the end is the denominator = |ω_i - 2ω_j| (Type I) or |ω_i - ω_j - ω_k| (Type II) in cm⁻¹. The threshold 10 means only resonances with denominator < 10 cm⁻¹ are printed. A smaller denominator means a stronger resonance / more severe VPT2 singularity.
 
-The number at the end is the denominator = |ω_i - 2ω_j| (Type I) or |ω_i - ω_j - ω_k| (Type II) in cm⁻¹. The threshold 10 means only resonances with denominator < 10 cm⁻¹ are printed. A smaller denominator means a stronger resonance / more severe VPT2 singularity.
-
-Mode numbers follow ORCA's output conventions (i.e., including translational/rotational modes). The offset (typically 6) is automatically detected from the IR table and applied to all Fermi mode indices.
+- Mode numbers follow ORCA's output conventions (i.e., including translational/rotational modes). The offset (typically 6) is automatically detected from the IR table and applied to all Fermi mode indices.
