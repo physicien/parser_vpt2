@@ -2,13 +2,7 @@
 
 Parse Fermi resonances and IR intensities from ORCA VPT2 output files.
 
-### Install
-
-```console
-pip install .
-```
-
-or run directly:
+### Usage
 
 ```console
 python3 parse_vpt2.py [OPTIONS] file.out
@@ -19,25 +13,25 @@ python3 parse_vpt2.py [OPTIONS] file.out
 List all Fermi resonances:
 
 ```console
-python3 parse_vpt2.py VPT2_furan_vpt2.out
+python3 parse_vpt2.py data/VPT2_furan_vpt2.out
 ```
 
 Filter by Type I only:
 
 ```console
-python3 parse_vpt2.py VPT2_furan_vpt2.out --type 1
+python3 parse_vpt2.py data/VPT2_furan_vpt2.out --type 1
 ```
 
 Require all coupling modes to have IR intensity ≥ 10 km/mol:
 
 ```console
-python3 parse_vpt2.py VPT2_furan_vpt2.out -I 10
+python3 parse_vpt2.py data/VPT2_furan_vpt2.out -I 10
 ```
 
 Print the harmonic IR table instead of Fermi resonances:
 
 ```console
-python3 parse_vpt2.py VPT2_furan_vpt2.out --ir-table
+python3 parse_vpt2.py data/VPT2_furan_vpt2.out --ir-table
 ```
 
 ### Command-line options
