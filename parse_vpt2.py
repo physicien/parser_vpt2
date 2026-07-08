@@ -62,6 +62,7 @@ class FermiResonance:
 class _Vpt2Data:
     """Container for all data extracted in a single file pass."""
     ir_intensities: dict[int, float] = field(default_factory=dict)
+    ir_frequencies: dict[int, float] = field(default_factory=dict)
     vib_offset: int = 0  # number of trans/rot modes before first real vibration
     fermi_resonances: list[FermiResonance] = field(default_factory=list)
 
@@ -83,15 +84,16 @@ _RE_TYPE2 = re.compile(
 )
 
 
-def _parse_ir_table(lines: Iterator[str]) -> tuple[dict[int, float], int]:
+def _parse_ir_table(lines: Iterator[str]) -> tuple[dict[int, float], dict[int, float], int]:
     """Parse the next IR Intensities table from *lines*.
 
     Advances the iterator past the end of the table.
 
     Returns
     -------
-    (ints, offset)
+    (ints, freqs, offset)
         ints : mapping from mode index to IR intensity (km/mol).
+        freqs : mapping from mode index to frequency (cm^-1).
         offset : number of leading trans/rot modes (freq < 10 cm^-1).
     """
     all_rows: list[tuple[int, float, float]] = []  # (mode, freq, int)
@@ -122,29 +124,35 @@ def _parse_ir_table(lines: Iterator[str]) -> tuple[dict[int, float], int]:
         all_rows.append((mode, freq, val))
 
     ints = {}
+    freqs = {}
     offset = 0
     for mode, freq, val in all_rows:
+        freqs[mode] = freq
         if not (val != val):  # skip NaN
             ints[mode] = val
         if freq < 10:
             offset = mode + 1
-    return ints, offset
+    return ints, freqs, offset
 
 
-def parse_file(path: str | Path) -> _Vpt2Data:
+def parse_file(path: str | Path, fermi: bool = True) -> _Vpt2Data:
     """Parse an ORCA VPT2 output file in a single pass.
 
     Parameters
     ----------
     path : str or Path
         Path to the ORCA ``.out`` file.
+    fermi : bool
+        Whether to parse Fermi resonances. Set to ``False`` when only
+        the IR table is needed to avoid reading the rest of the file.
 
     Returns
     -------
     _Vpt2Data
-        Container with ``ir_intensities``, ``vib_offset``, and
-        ``fermi_resonances``. Fermi mode indices include ``vib_offset``
-        to match the numbering in the ORCA output file.
+        Container with ``ir_intensities``, ``ir_frequencies``,
+        ``vib_offset``, and ``fermi_resonances``. Fermi mode indices
+        include ``vib_offset`` to match the numbering in the ORCA
+        output file.
     """
     data = _Vpt2Data()
 
@@ -154,11 +162,16 @@ def parse_file(path: str | Path) -> _Vpt2Data:
             if _IR_TABLE_TITLE in line and not data.ir_intensities:
                 for l in fh:
                     if l.startswith(_IR_COL_HEADER) and _IR_COL_KEY in l:
-                        ints, offset = _parse_ir_table(fh)
+                        ints, freqs, offset = _parse_ir_table(fh)
                         data.ir_intensities = ints
+                        data.ir_frequencies = freqs
                         if not data.vib_offset:
                             data.vib_offset = offset
                         break
+                # IR table always appears before Fermi resonances in ORCA
+                # output, so we can exit early when only the table is needed.
+                if not fermi:
+                    return data
                 continue
 
             # --- Fermi resonances ---
@@ -209,9 +222,24 @@ def main() -> None:
         "-I", "--min-intensity", type=float, default=0,
         help="Minimum IR intensity (km/mol) of any mode in the resonance"
     )
+    parser.add_argument(
+        "--ir-table", action="store_true",
+        help="Print the IR intensity table instead of Fermi resonances"
+    )
     args = parser.parse_args()
 
-    data = parse_file(args.file)
+    data = parse_file(args.file, fermi=not args.ir_table)
+
+    if args.ir_table:
+        if not data.ir_frequencies:
+            print("No IR intensities found.")
+            return
+        print(f"{'Mode':>6}  {'Frequency (cm⁻¹)':>16}  {'Intensity (km/mol)':>18}")
+        for mode in sorted(data.ir_frequencies):
+            freq = data.ir_frequencies[mode]
+            val = data.ir_intensities.get(mode, float("nan"))
+            print(f"{mode:>6}  {freq:>16.2f}  {val:>18.3f}")
+        return
 
     if not data.fermi_resonances:
         print("No Fermi resonances found.")
