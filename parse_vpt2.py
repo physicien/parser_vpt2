@@ -148,8 +148,8 @@ def parse_file(path: str | Path) -> _Vpt2Data:
 
     with open(path) as fh:
         for line in fh:
-            # --- IR intensity tables (reset on each new table) ---
-            if _IR_TABLE_TITLE in line:
+            # --- IR intensity tables (first occurrence only, harmonic) ---
+            if _IR_TABLE_TITLE in line and not data.ir_intensities:
                 for l in fh:
                     if l.startswith(_IR_COL_HEADER) and _IR_COL_KEY in l:
                         ints, offset = _parse_ir_table(fh)
