@@ -24,7 +24,8 @@ class FermiResonance:
         1 for Type I (fundamental near overtone),
         2 for Type II (fundamental near combination band).
     modes : list of int
-        Mode indices: [i, j] for Type I (omega_i ~ 2*omega_j),
+        Mode indices (ORCA numbering, i.e. including trans/rot offset):
+        [i, j] for Type I (omega_i ~ 2*omega_j),
         [i, j, k] for Type II (omega_i ~ omega_j + omega_k).
     denominator : float
         Energy difference in cm^-1.
@@ -61,7 +62,7 @@ class FermiResonance:
 class _Vpt2Data:
     """Container for all data extracted in a single file pass."""
     ir_intensities: dict[int, float] = field(default_factory=dict)
-    vib_offset: int = 0
+    vib_offset: int = 0  # number of trans/rot modes before first real vibration
     fermi_resonances: list[FermiResonance] = field(default_factory=list)
 
 
@@ -142,7 +143,8 @@ def parse_file(path: str | Path) -> _Vpt2Data:
     -------
     _Vpt2Data
         Container with ``ir_intensities``, ``vib_offset``, and
-        ``fermi_resonances``.
+        ``fermi_resonances``. Fermi mode indices include ``vib_offset``
+        to match the numbering in the ORCA output file.
     """
     data = _Vpt2Data()
 
@@ -163,13 +165,16 @@ def parse_file(path: str | Path) -> _Vpt2Data:
             if _RESONANCE_KEY not in line:
                 continue
 
+            # Shift Fermi-block mode numbers by the trans/rot offset so
+            # they match the numbering used elsewhere in the ORCA output.
+            offset = data.vib_offset
             m = _RE_TYPE2.search(line)
             if m:
                 data.fermi_resonances.append(FermiResonance(
                     resonance_type=2,
-                    modes=[int(m.group(1)),
-                           int(m.group(2)),
-                           int(m.group(3))],
+                    modes=[int(m.group(1)) + offset,
+                           int(m.group(2)) + offset,
+                           int(m.group(3)) + offset],
                     denominator=float(m.group(4)),
                 ))
                 continue
@@ -177,7 +182,8 @@ def parse_file(path: str | Path) -> _Vpt2Data:
             if m:
                 data.fermi_resonances.append(FermiResonance(
                     resonance_type=1,
-                    modes=[int(m.group(1)), int(m.group(2))],
+                    modes=[int(m.group(1)) + offset,
+                           int(m.group(2)) + offset],
                     denominator=float(m.group(3)),
                 ))
 
@@ -217,12 +223,11 @@ def main() -> None:
         resonances = [r for r in resonances if r.resonance_type == args.type]
 
     if args.min_intensity > 0:
-        offset = data.vib_offset
         ir = data.ir_intensities
 
         def _passes_int(r: FermiResonance) -> bool:
             return any(
-                ir.get(m + offset, 0) >= args.min_intensity
+                ir.get(m, 0) >= args.min_intensity
                 for m in r.involved_modes()
             )
 
