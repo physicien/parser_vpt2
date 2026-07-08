@@ -1,4 +1,0 @@
-Type I (possible Type I resonance mode i j): fundamental mode i is near-degenerate with the overtone 2×ω_j.
-Type II (possible Type II resonance 10 mode i j k): fundamental mode i is near-degenerate with the combination ω_j + ω_k.
-
-The number at the end is the denominator = |ω_i - 2ω_j| (Type I) or |ω_i - ω_j - ω_k| (Type II) in cm⁻¹. The threshold 10 means only resonances with denominator < 10 cm⁻¹ are printed. A smaller denominator means a stronger resonance / more severe VPT2 singularity.
